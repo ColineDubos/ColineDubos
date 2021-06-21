@@ -37,7 +37,7 @@ import os
 # Make plots display in notebooks
 %matplotlib inline
 
-# Color-magnitude diagram for Hermes 
+# Code [1] : Color-magnitude diagram for Hermes 
 
 # 2015
 
@@ -59,7 +59,7 @@ plt.ylabel('V')
 plt.title('RH diagram for data of Hermes')
 plt.show()
 
-# Calculation of the radial velocity
+# Code [2] : Calculation of the radial velocity
 
 # Creation of tables that we are going to browse 
 
@@ -449,7 +449,7 @@ starname = np.asarray(starname)
 RA = np.asarray(RA) 
 DEC = np.asarray(DEC)                                               
 
-# Correlation between Hermes and Stella
+# Code [3] : Correlation between Hermes and Stella
 
 import csv
 
