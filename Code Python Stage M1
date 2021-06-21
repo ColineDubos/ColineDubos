@@ -1,0 +1,531 @@
+from __future__ import division
+# Modeling and adjustment of the absorption lines of hot star spectra in order to calculate the radial velocity 
+
+import glob
+# we need a special library to open the SES multispec files
+import readmultispec as rm
+from astropy.table import Table
+from astropy.io import fits, ascii
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
+import scipy.optimize
+import scipy.stats
+from scipy.stats import chisquare,median_abs_deviation
+from numpy import log
+import astroquery
+from astroquery.simbad import Simbad
+from astropy import units as u
+from astropy.stats import sigma_clip
+from astropy.stats.info_theory import akaike_info_criterion_lsq
+from astropy.time import Time 
+from astropy.coordinates import SkyCoord, EarthLocation
+from astropy.time import Time
+from astropy.coordinates import SkyCoord, EarthLocation
+from specutils.spectra import Spectrum1D, SpectralRegion
+from specutils.fitting import fit_generic_continuum, fit_continuum, fit_lines, find_lines_derivative, estimate_line_parameters
+from specutils.analysis import snr_derived
+from astropy.modeling import models, fitting, FittableModel
+from astropy.modeling.models import custom_model
+from astropy.modeling import Fittable1DModel, Parameter
+from astropy.constants import c
+from specutils.manipulation import extract_region
+from specutils.analysis import centroid, fwhm
+from scipy.interpolate import splrep, sproot, splev
+from scipy.signal import chirp, find_peaks, peak_widths
+import os
+# Make plots display in notebooks
+%matplotlib inline
+
+# Color-magnitude diagram for Hermes 
+
+# 2015
+
+magB1 = [1.51,7.93,1.42,7.67,7.82,7.79,7.78,7.61,7.80,7.76,7.77,7.78,7.74,7.57,7.60,7.69,7.90,7.56,7.89,6.37,7.83,7.80,7.93,7.64,7.94,7.91,7.62,6.42,7.76,7.89,7.66,7.84,7.83,6.92,7.87,8.06,7.74,9.02,2.27,7.53,7.40,8.46,7.44,7.33,7.18,7.49,7.29,7.20,7.25,7.74,7.05,7.245,7.17,7.39,7.16,7.38,7.11,7.93,7.22,7.42,7.52,7.37,7.54,7.28,7.47,7.25,7.161,6.37,7.22,7.036,7.057,7.38,7.14,7.82,7.42,7.43,7.67,7.367,7.31,7.48,7.75,7.49,7.61,7.50,8.06,7.52,7.51,5.661,3.59,7.398,7.04,7.1,8.88,7.02,6.38,6.66,6.97,7.00,6.82,6.167,6.097,6.970,6.550,6.845,7.93,6.411,6.223,6.92,6.005,6.888,6.65,7.07,6.601,6.95,7.47,6.24,6.364,6.41,7.034,7.03,6.159,6.877,6.52,6.256,7.55,6.53,6.44,6.573,8.450,6.212,6.589,6.77,7.67,6.380,6.130,6.37,6.390,6.516,6.99,6.569,7.058,6.847,6.43,6.098,6.24,6.28,6.34,6.991,6.675,7.02,6.51,6.375,7.052,7.350,7.26,7.81,7.83,7.86,7.75,6.243]
+magV1 = [1.69,7.52,1.64,7.65,7.95,7.87,7.88,7.68,7.86,7.89,7.87,7.91,7.81,7.67,7.67,7.77,7.95,7.66,7.80,6.33,7.84,7.83,7.95,7.66,7.95,7.89,7.67,6.46,7.80,7.81,7.64,7.83,7.84,6.92,7.81,7.82,7.82,9.04,0.42,7.64,7.48,8.46,7.55,7.46,7.30,7.55,7.30,7.25,7.26,7.54,7.22,7.300,7.23,7.26,7.05,7.34,7.24,7.52,7.30,7.44,7.58,7.48,7.59,7.34,7.46,7.35,7.168,6.33,7.31,7.176,7.195,7.52,7.24,7.95,7.56,7.56,7.65,7.474,7.38,7.59,7.78,7.55,7.68,7.62,7.82,7.63,7.60,5.819,3.74,7.458,7.17,7.00,8.77,7.17,6.46,6.67,7.02,7.15,6.84,6.122,6.058,7.020,6.630,6.797,7.52,6.511,6.406,6.93,6.039,6.991,6.52,7.13,6.667,7.09,7.43,6.35,6.412,6.52,7.099,7.07,6.297,6.950,6.57,6.420,7.54,6.53,6.62,6.738,8.230,6.380,6.633,6.91,7.62,6.382,6.313,6.46,6.571,6.668,6.82,6.709,7.151,6.975,6.56,6.244,6.38,6.41,6.51,7.149,6.826,7.09,6.69,6.481,7.045,7.274,7.28,7.86,7.82,7.87,7.68,6.372]
+deltamag1 = [magB1_elt - magV1_elt for magV1_elt, magB1_elt in zip(magV1, magB1)]
+
+# 2021
+
+magB2 = [4.86,5.460,7.71,11.27,11.02,9.31,7.800,10.39,11.47,11.14,9.25,11.27,11.44,11.62,8.617,9.80,11.67,11.41]
+magV2 = [4.25,4.680,7.00,9.74,9.38,8.51,6.400,8.86,9.93,9.55,7.70,9.68,9.70,9.91,7.589,8.15,10.09,9.85]
+deltamag2 = [magB2_elt - magV2_elt for magV2_elt, magB2_elt in zip(magV2, magB2)]
+
+plt.scatter(deltamag1, magV1, s=10,color='turquoise',label='Hermes 2015')
+plt.scatter(deltamag2, magV2, s=10,color='green',label='Hermes 2021')
+plt.legend(loc='best')
+plt.xlabel('B-V')
+plt.ylabel('V')
+plt.title('RH diagram for data of Hermes')
+plt.show()
+
+# Calculation of the radial velocity
+
+# Creation of tables that we are going to browse 
+
+Hermes = glob.glob("/home/cdubos/Data/Mercator_Hermes/Data_Hermes/*HRF_OBJ_ext_wavelength_merged.fits") # Hermes
+Stella = glob.glob("/home/cdubos/Data/STELLA_SES/*fits") # Stella
+flieslist = [Hermes,Stella]
+
+# Creation of the tables to save values of the weighted mean radial velocity, it uncertainty, the mean radial velocity
+# the median deviation standart, the type spectral, the name of the star and the coordinates
+
+vrmeanweighted = []
+deltavrmeanweighted = []
+vrmeantab = []
+vrmedtab = []
+spectral = []
+starname = []
+RA = []
+DEC =[]
+
+for filename in filelist :     
+    
+    # Creation of the tables to save values of the lines that we will keep statistically, the radial velocity and it uncertainty
+    
+    goodlines = []
+    vr = [] 
+    Deltavr = []
+    
+    file = fits.open(filename) 
+    
+    if filename == Hermes :
+    
+        # Creation of tables of interesting lines
+
+        linelist1 = [3835.38, 3889.05, 3933.66, 3970.07, 4101.73, 4340.46, 4481.13, 4549.47, 4861.32, 5316.62, 6347.11, 6562.8, 7774.17, 8446.25, 8542.09, 8665.02, 8750.48, 8862.79] # Domain of stars of type spectral A0-B6V
+        linelist2 = [3889.05, 3970.07, 4026.19, 4101.73, 4340.46, 4481.13, 4861.32, 5875.62, 6562.8, 8542.09, 8665.02, 8750.48, 8862.79] # Domain of stars of type spectral B6VI-B7III
+        linelist3 = [3889.05, 3970.07, 4026.19, 4101.73, 4340.46, 4861.32, 5875.62, 6562.8, 8542.09, 8665.02, 8750.48, 8862.79] # Domain of stars of type spectral B7IV-B10
+
+
+        # We recover informations on spectral type and coordinates of the star
+
+        name = file[0].header['OBJECT'] # Name of the star
+        customSimbad = Simbad()
+        customSimbad.add_votable_fields('ra','dec')    
+        customSimbad.add_votable_fields('sptype')                                        
+        result = customSimbad.query_object(name)
+
+        if result is not None :
+            spectraltype = result['SP_TYPE'][0].decode('utf8') # in order to the octets array become a str   
+            coordra = result['RA'][0]  
+            coorddec = result['DEC'][0]
+
+        # Creation of tables of susceptibles spectral type of the star : the type spectral of the star will be in one of these 3 list
+
+        listspectral1 = ['A0','A1','A2','A3','A4','A5','A6','A7','A8','A9','A10','B0','B1','B2','B3','B4','B5','B6','B6V']
+        listspectral2 = ['B6VI','B7','B7III']
+        listspectral3 = ['B7IV','B7V','B7VI','B8','B9','B10','O']
+
+        if type(spectraltype) == list :
+            spectraltype = spectraltype[0]
+
+        if spectraltype.find('M') != -1 :
+            linelist = []
+
+        if spectraltype.find('K') != -1 :
+            linelist = []
+
+        if spectraltype.find('G') != -1 :
+            linelist = []    
+
+        for i in listspectral1 :
+            if spectraltype.find(i) != -1 :
+                linelist = linelist1
+        for i in listspectral2 :
+            if spectraltype.find(i) != -1 :
+                linelist = linelist2
+        for i in listspectral3 :
+            if spectraltype.find(i) != -1 :
+                linelist = linelist3
+                
+        for line in linelist:   
+
+            # We read the spectrum
+
+            crpix1=file[0].header["CRPIX1"]
+            crval1=file[0].header["CRVAL1"]
+            cdelt1=file[0].header["CDELT1"]
+            flux=file[0].data # Creation of the y-axis representating the flux received
+            wave=np.arange(crval1,crval1+len(flux)*cdelt1,cdelt1) # Creation of the x-axis representating the wavelengths in Angstrom
+
+            # We selectionnate the line in a domain where there is enough data 
+
+            h=np.where((wave>line-30) & (wave<line+30)) 
+            wave=wave[h]
+            flux=flux[h]
+
+            # The spectrum can represent either one or many spectra, all with the same spectral axis
+
+            spec = Spectrum1D(spectral_axis=wave*u.AA, flux=flux*u.adu) 
+            spec = flux
+
+            # We find the amplitude of the line
+
+            maxi=max(spec)
+            ampli=-(maxi-min(spec))
+
+            # We initialize the outlier removal fitter
+
+            fitter = fitting.LevMarLSQFitter() # We choose this fitter adapted to Lorentzian
+            or_fit = fitting.FittingWithOutlierRemoval(fitter, sigma_clip, niter=3, sigma=3.0)
+
+            # We choose a superposition of models, one or many for the absorption line, the other for the continuum
+
+            if line == 4026.19 :
+                compound_model_Lorentz =  models.Lorentz1D(ampli,4026.1,2,) + models.Lorentz1D(ampli,4026.2,2) + models.Lorentz1D(ampli,4026.3,2) + models.Chebyshev1D(degree=3)
+            elif line == 4481.13 :
+                compound_model_Lorentz =  models.Lorentz1D(ampli,4481.1,2) + models.Lorentz1D(ampli,4481.2,2) + models.Lorentz1D(ampli,4481.3,2) + models.Chebyshev1D(degree=3)
+            elif line == 4549.47 :
+                compound_model_Lorentz =  models.Lorentz1D(ampli,4549.4,2) + models.Lorentz1D(ampli,4549.6,2) + models.Chebyshev1D(degree=3)
+            elif line == 7774.17 :
+                compound_model_Lorentz =  models.Lorentz1D(ampli,7774.1,2) + models.Lorentz1D(ampli,7775.3,2) + models.Chebyshev1D(degree=3)
+            elif line == 8446.25 :
+                compound_model_Lorentz =  models.Lorentz1D(ampli,8446.2,2) + models.Lorentz1D(ampli,8446.3,2) + models.Lorentz1D(ampli,8446.7,2) + models.Chebyshev1D(degree=3)
+            else :
+                compound_model_Lorentz =  models.Lorentz1D(ampli,int(line),10) + models.Chebyshev1D(degree=3)
+
+            # We fit the data with the fitter 
+
+            fitted_line, mask = or_fit(compound_model_Lorentz, wave, spec) # Here we don't do a rejection : we fit over all the domain
+            filtered_data = np.ma.masked_array(spec, mask=mask)
+
+            compound_fit_Lorentz = fitter(compound_model_Lorentz, wave, spec)
+
+            # We are looking for the covariance matrix which is in the fitter
+
+            if fitter.fit_info['param_cov'] is not None :
+                cov_diag = np.diag(fitter.fit_info['param_cov'])
+
+
+            # Calculation of residuals
+
+            fig, ax = plt.subplots()
+            ax.plot(wave, (spec-compound_fit_Lorentz(wave)))
+            ax.set_xlabel('Wavelength (Angstroms)')
+            ax.set_ylabel('Dispersion (flux)')
+            ax.legend()
+            ax.set_title('Dispersion of the Voigt fit with the data : {}'.format(name))
+            ax.grid(True)
+            print('Lorentz =',np.sum((spec-compound_fit_Lorentz(wave))**2))
+
+
+            # Evaluation of the quality of the line   
+
+            goodbic=~np.ma.getmask(filtered_data) # Domain of the inverse of bad points (booleen)        
+            chi2 = np.sum((fitted_line(wave[goodbic])-compound_fit_Lorentz(wave[goodbic]))**2)/len(compound_fit_Lorentz(wave[goodbic]))
+            noise = snr_derived(Spectrum1D(spectral_axis=wave[goodbic]*u.AA, flux=flux[goodbic]*u.adu))
+
+            # BIC : measure which of the fit is the most adapted
+
+            mse_Lorentz=np.square(np.subtract(flux,fitted_line(wave))).mean() # Mean squared deviation 
+            polynom_model =  models.Chebyshev1D(degree=3) # We want to compare a polynomial model with our compound model
+            n_polynom=np.sum(goodbic) # Number of points (sum of booleen is the length of the domain)
+            fitted_line_polynom = fitter(polynom_model, wave[goodbic], spec[goodbic]) # We fit the polynomial model using rejection : we fit only on the domain without outliers
+            mse_polynom=np.square(np.subtract(spec[goodbic],fitted_line_polynom(wave[goodbic]))).mean()
+
+            # Calculation of BIC for regression
+
+            def calculate_bic(n, mse, num_params):
+                bic = n * log(mse) + num_params * log(n)
+                return bic
+
+            bic_Lorentz=calculate_bic(len(spec),mse_Lorentz,7) # 7 ddl (3 gauss + 3 polynomial + 1 linear)
+            bic_polynom=calculate_bic(n_polynom,mse_polynom,4) # 4 ddl (3 polynomial + 1 linear)
+
+            # BIC the smallest is the one giving the best model 
+
+            if bic_Lorentz<bic_polynom: 
+
+                goodlines.append(line)        
+
+                fig, ax = plt.subplots()        
+                ax.plot(wave, spec, color='k',linewidth=0.25, label='Non normalized spectrum')
+                ax.plot(wave, filtered_data, label="Fitted Data")
+                ax.plot(wave, compound_fit_Lorentz(wave),linewidth=1.5, label='Lorentz Fit')
+                ax.set_xlabel('Wavelength (Angstroms)')
+                ax.set_ylabel('Flux')
+                ax.legend()
+                ax.set_title('Spectrum fitted:{}'.format(name))
+                ax.grid(True)
+                print('fit Lorentz',compound_fit_Lorentz)
+
+                # Information on localization of the observatory, coordinates, observatory date and barycorr velocity
+
+                hermes = EarthLocation.of_site('roque de los muchachos')
+                sc = SkyCoord(ra=83.26542*u.deg, dec=-1.24106*u.deg)
+                dateobs=file[0].header['DATE-AVG']
+                barycorr = sc.radial_velocity_correction(obstime=Time(dateobs), location=hermes)
+
+                # Calculation of the radial velocity and it uncertainty
+
+                rvel=((compound_fit_Lorentz[0].parameters[1]-line)/line)*c+barycorr
+                vr.append(rvel.value)
+
+                Deltarvel=np.abs((c/line)*np.sqrt(cov_diag[1]))
+                Deltavr.append(Deltarvel.value)
+
+            else:
+                  del line
+
+             
+    else filename == Stella :
+        
+        # We read the file    
+        
+        ms = rm.readmultispec(file,reform=True)
+
+        # We retrieve the useful information
+        
+        name = file[0].header['OBJNAME']
+        coordra = file[0].header['OBJRA']
+        coorddec = file[0].header['OBJDEC']
+        dateobs = file[0].header['DATE-OBS']
+
+        customSimbad = Simbad()
+        customSimbad.add_votable_fields('sptype')  
+        result = customSimbad.query_object(name)
+
+        if result is not None :
+            spectraltype = result['SP_TYPE'][0].decode('utf8') # in order to the octets array become a str   
+
+        if type(spectraltype) == list :
+                spectraltype = spectraltype[0]
+
+
+        # We use a dictionnary that gives us the order to read for each line
+        # if the value is -999, then the line is outside the spectrum and we ignore it
+
+        ses_orders={3835.38:-999, 3889.05:162, 3933.66:160,3970.07:156,4026.19:152,4101.73:148,4340.46:132,4481.13:124,4549.47:120,4861.32:104,5316.62:84,5875.62:64,6347.11:50,6562.8:44,7774.17:16,8446.25:4,8542.09:4,8665.02:2,8750.48:0,8862.79:-999}
+
+        for w in ses_orders.keys():
+            ord=ses_orders[w]       
+
+            # Information on localization of the observatory, coordinates, observatory date and barycorr velocity
+
+            Stella = EarthLocation.from_geodetic(lat=48.2167,lon=20.2919,height=2390)
+            sc = SkyCoord(ra=coordra*u.deg, dec=coorddec*u.deg)
+            barycorr = sc.radial_velocity_correction(obstime=Time(dateobs), location=Stella)
+
+            if ord != -999 :
+                wave=ms['wavelen'][ord]
+                flux=ms['flux'][0][ord]
+                h=np.where((wave>w-20) & (wave<w+20)) 
+                wave=wave[h]
+                flux=flux[h]
+                
+                spec = Spectrum1D(spectral_axis=wave*u.AA, flux=flux*u.adu) 
+                spec = flux
+ 
+                maxi=max(spec)
+                ampli=-(maxi-min(spec))
+
+                fitter = fitting.LevMarLSQFitter() # We choose this fitter adapted to Lorentzian (non linear parameters) that will fit our observed data
+                or_fit = fitting.FittingWithOutlierRemoval(fitter, sigma_clip, niter=3, sigma=5.0)
+
+                if w == 4026.19 :
+                    compound_model_Lorentz =  models.Lorentz1D(ampli,4026.1,1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Lorentz1D(ampli,4026.2,1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))})  + models.Lorentz1D(ampli,4026.3,1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Chebyshev1D(degree=4)
+                elif w == 4481.13 :
+                    compound_model_Lorentz =  models.Lorentz1D(ampli,4481.1,1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Lorentz1D(ampli,4481.2,1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Lorentz1D(ampli,4481.3,1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Chebyshev1D(degree=4)
+                elif w == 4549.47 :
+                    compound_model_Lorentz =  models.Lorentz1D(ampli,4549.4,1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Lorentz1D(ampli,4549.6,1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Chebyshev1D(degree=4)
+                elif w == 7774.17 :
+                    compound_model_Lorentz =  models.Lorentz1D(ampli,7774.1,1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Lorentz1D(ampli,7775.3,1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Chebyshev1D(degree=4)
+                elif w == 8446.25 :
+                    compound_model_Lorentz =  models.Lorentz1D(ampli,8446.2,1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Lorentz1D(ampli,8446.3,21,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Lorentz1D(ampli,8446.7,1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Chebyshev1D(degree=4)
+                else :
+                    compound_model_Lorentz =  models.Lorentz1D(ampli,int(w),1,bounds={'amplitude': (-np.inf,0),'x_0': ((c.value*w)/(barycorr.value+c.value-1*10**3),(c.value*w)/(barycorr.value+c.value-100*10**3))}) + models.Chebyshev1D(degree=4) 
+
+                fitted_line, mask = or_fit(compound_model_Lorentz, wave, spec) # Here we don't do a rejection : we fit over all the domain
+                filtered_data = np.ma.masked_array(spec, mask=mask)
+
+                compound_fit_Lorentz = fitter(compound_model_Lorentz, wave, spec)
+
+                if fitter.fit_info['param_cov'] is not None :
+                    cov_diag = np.diag(fitter.fit_info['param_cov'])
+
+                mse_Lorentz=np.square(np.subtract(flux,fitted_line(wave))).mean() # Mean squared deviation 
+                polynom_model =  models.Chebyshev1D(degree=4) # We want to compare a polynomial model with our compound model with the sames degrees of the polynomial
+                n_polynom=np.sum(goodbic) # Number of points (sum of booleen is the length of the domain)
+                fitted_line_polynom = fitter(polynom_model, wave[goodbic], spec[goodbic]) # We fit the polynomial model using rejection : we fit only on the domain without outliers
+                mse_polynom=np.square(np.subtract(spec[goodbic],fitted_line_polynom(wave[goodbic]))).mean()              
+
+                def calculate_bic(n, mse, num_params):
+                    bic = n * log(mse) + num_params * log(n)
+                    return bic
+
+                bic_Lorentz=calculate_bic(len(spec),mse_Lorentz,8) 
+                bic_polynom=calculate_bic(n_polynom,mse_polynom,5) 
+
+                if bic_Lorentz<bic_polynom: 
+                    
+                    goodlines.append(w)        
+                    fig, ax = plt.subplots()        
+                    ax.plot(wave, spec, color='k',linewidth=0.25, label='Non normalized spectrum')
+                    ax.plot(wave, filtered_data, label="Fitted Data")
+                    ax.plot(wave, compound_fit_Lorentz(wave),linewidth=1.5, label='Lorentz Fit')
+                    ax.set_xlabel('Wavelength (Angstroms)')
+                    ax.set_ylabel('Flux')
+                    ax.legend()
+                    ax.set_title('Spectrum fitted:{}'.format(name))
+                    ax.grid(True)
+                    print('fit Lorentz',compound_fit_Lorentz)
+
+
+                    rvel=((compound_fit_Lorentz[0].parameters[1]-w)/w)*c+barycorr
+                    vr.append(rvel.value)
+
+                    Deltarvel=np.abs((c/w)*np.sqrt(cov_diag[1]))
+                    Deltavr.append(Deltarvel.value)
+
+                else:
+                    del w                
+    
+
+    # We save values in the tables
+
+    vr=np.asarray(vr)
+    Deltavr=np.asarray(Deltavr) 
+    goodnan=~np.isnan(Deltavr)
+    vr = vr[goodnan]
+    Deltavr = Deltavr[goodnan]
+    goodlines=np.asarray(goodlines)
+
+    # We selectionnate with another method lines and so radial velocity    
+    
+    for i in np.arange(0,3):
+        if len(vr)>1 :
+
+            vrmean = np.mean(vr)
+            vrmed = median_abs_deviation(vr)
+
+            good = np.where(np.abs(vr-vrmean)<=3*vrmed)
+            bad =  np.where(np.abs(vr-vrmean)>=3*vrmed)
+            
+            vr = vr[good] # Rejection of the bad vr statiscally
+            Deltavr = Deltavr[good]        
+            badlines = goodlines[bad] # Take the bad lines to see which ones are problems
+            
+
+    # W add values at our tables
+
+    if np.sum(1/Deltavr)!=0 :
+        
+        vrmeanweighted.append(np.average(vr,weights=1/Deltavr**2))
+        deltavrmeanweighted.append(np.sqrt(1/np.sum(1/Deltavr**2)))
+        
+        vrmeantab.append(np.mean(vr))
+        vrmedtab.append(median_abs_deviation(vr))
+        
+        spectral.append(spectraltype)
+        starname.append(name)
+        RA.append(coordra)
+        DEC.append(coorddec)                                    
+    
+    # We plot the radial velocity and it uncertainty of each star as a function of their spectral type
+    
+    if np.sum(1/Deltavr)!=0 :
+        
+        vrmeanweightedfloat = np.average(vr,weights=1/Deltavr**2)
+        deltavrmeanweightedfloat = (np.sqrt(1/np.sum(1/Deltavr**2)))
+          
+        spectraltype = [spectraltype]
+        if np.abs(vrmeanweightedfloat) > deltavrmeanweightedfloat :
+            plt.errorbar(spectraltype,vrmeanweightedfloat,yerr=deltavrmeanweightedfloat, fmt='-o')
+            plt.xticks(rotation=90,fontsize=7)
+            plt.xlabel('Spectral type')
+            plt.ylabel('Radial velocity (m/s)')
+            plt.title('Radial velocity')
+        
+
+# We save values in the tables
+
+vrmeantab = np.asarray(vrmeantab)
+vrmedtab = np.asarray(vrmedtab)
+vrmeanweighted = np.asarray(vrmeanweighted)
+deltavrmeanweighted = np.asarray(deltavrmeanweighted) 
+spectral = np.asarray(spectral)
+starname = np.asarray(starname)
+RA = np.asarray(RA) 
+DEC = np.asarray(DEC)                                               
+
+# Correlation between Hermes and Stella
+
+import csv
+
+# To convert list of vr, deltavr in a list of float
+
+def convert_list(lst):
+    for index, item in enumerate(lst):
+        lst[index] = float(item)
+    return lst
+  
+
+# We open our data
+
+stella=open("/home/cdubos/Data/ResultsStellabis.csv")
+stella=csv.reader(stella)
+
+hermes=open("/home/cdubos/Data/ResultsHermesbis.csv")
+hermes=csv.reader(hermes)
+ 
+namestella=[]
+vrstella=[]
+deltavrstella=[]
+
+namehermes=[]
+vrhermes=[]
+deltavrhermes=[]
+
+# We are looking for columns that we need
+
+for ligne in stella:
+    for ligne in hermes:
+        
+        namestella.append((ligne[0]))  
+        namehermes.append((ligne[0]))
+                
+        vrstella.append((ligne[4]))
+        deltavrstella.append((ligne[5]))
+
+        vrhermes.append((ligne[4]))
+        deltavrhermes.append((ligne[5]))
+
+# We delete the title of columns
+
+namestella.pop(0)
+namehermes.pop(0)
+
+vrstella.pop(0)
+vrhermes.pop(0) 
+deltavrstella.pop(0)
+deltavrhermes.pop(0) 
+ 
+vrs = convert_list(vrstella)
+vrh = convert_list(vrhermes) 
+
+deltavrs = convert_list(deltavrstella)
+deltavrh = convert_list(deltavrhermes)     
+
+name = []
+vs = []
+vh = []
+deltavs = []
+deltavh = []
+
+# We plot vrstella as a function of vrhermes if they are the same stars
+
+for i in range(len(namestella)) :
+    for j in range(len(namehermes)) :
+        if namestella[i]==namehermes[j] :
+            if np.abs(vrs[i])>deltavrs[i] and np.abs(vrh[j])>deltavrh[j]:
+                name.append(namestella[i])
+                vs.append(vrs[i])
+                deltavs.append(deltavrs[i])
+                vh.append(vrh[j])
+                deltavh.append(deltavrh[i])
+
+plt.errorbar(vh,vs,xerr=deltavh,yerr=deltavs, fmt='none', ecolor='black')
+plt.xlabel('Radial velocity Hermes (m/s)')
+plt.ylabel('Radial velocity Stella (m/s)')
+plt.title('Comparison of the star speeds of the common stars of the two telescopes')    
